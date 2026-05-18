@@ -8,28 +8,37 @@ from threading import Thread
 from flask import Flask
 import telebot
 
-# --- إعداد خادم الويب الوهمي لإبقاء السيرفر حياً ---
+# تفعيل مسار أداة FFmpeg المحمّلة سحابياً تلقائياً داخل سيرفر Render
+os.environ["PATH"] += os.pathsep + os.getcwd()
+
+# --- إعداد خادم الويب لإبقاء السيرفر مستيقظاً ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "🚀 البوت يعمل بنجاح 24/7!"
+    return "🚀 السيرفر والبوت يعملان بنجاح 24/7!"
 
 def run_web_server():
-    # السيرفر سيعمل على بورت 8080 وهو المطلوب لمنصة Render
     app.run(host='0.0.0.0', port=8080)
 
-# --- إعدادات البوت والـ APIs ---
-TELEGRAM_BOT_TOKEN = "ضع_توكن_تليجرام_هنا"
-GROQ_API_KEY = "ضع_مفتاح_Groq_هنا"
+# --- جلب المفاتيح السرية بأمان تام من متغيرات البيئة السحابية ---
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# اختيار نموذج Llama 3.1 8B الاقتصادي والسريع لحماية حصة البوت التلقائي
 TRANSLATION_MODEL = "llama-3.1-8b-instant" 
 
 AUDIO_CHUNKS_DIR = "audio_chunks"
 FINAL_SRT_PATH = "translated_movie.srt"
 
+# فحص أمان استباقي للتأكد من إضافتك للمفاتيح في لوحة التحكم
+if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
+    print("❌ خطأ حرج: لم يتم العثور على TELEGRAM_BOT_TOKEN أو GROQ_API_KEY في متغيرات البيئة!")
+    sys.exit(1)
+
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# --- الدوال المساعدة للتفريغ والترجمة (نفس كودك الناجح) ---
+# --- الدوال المساعدة للتفريغ والترجمة التلقائية ---
 
 def format_whisper_time(seconds):
     hours = int(seconds // 3600)
@@ -86,7 +95,6 @@ def transcribe_audio_chunk(chunk_path):
 
 def translate_srt_with_groq(srt_content):
     if not srt_content.strip(): return ""
-    url = "https://api.openai.com/v1/chat/completions" # صيغة متوافقة مع جروق
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     prompt = f"Translate the following SRT subtitle text into professional movie Arabic. Keep timestamps unchanged. Return ONLY SRT:\n\n{srt_content}"
@@ -104,35 +112,38 @@ def translate_srt_with_groq(srt_content):
             time.sleep(5)
     return srt_content
 
-# --- استقبال رسائل تليجرام ---
+# --- إدارة رسائل وأوامر بوت تليجرام ---
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "🎬 **أهلاً بك!** أرسل رابط الفيلم المباشر (.mp4 أو .m3u8) وسأتولى ترجمته فوراً مجاناً!")
+    bot.reply_to(message, "🎬 **مرحباً بك في بوت الترجمة التلقائية!**\n\nأرسل لي رابط الفيلم المباشر بصيغة `.mp4` أو رابط البث `.m3u8` وسأقوم بتفريغه وترجمته سينمائياً فوراً مجاناً! 🤖✨")
 
 @bot.message_handler(func=lambda message: True)
 def handle_movie_request(message):
     video_url = message.text.strip()
     if not (video_url.startswith("http://") or video_url.startswith("https://")):
-        bot.reply_to(message, "⚠️ من فضلك أرسل رابطاً صحيحاً.")
+        bot.reply_to(message, "⚠️ من فضلك أرسل رابطاً صحيحاً يبدأ بـ http أو https.")
         return
         
-    status_msg = bot.reply_to(message, "⏳ جاري الاتصال بالبث وفصل الصوت وتفكيك الفيلم...")
+    status_msg = bot.reply_to(message, "⏳ تم استلام الرابط بنجاح! جاري الاتصال بالبث المباشر وفصل الصوت وتفكيك الفيلم سحابياً...")
     chunk_length = 600
     audio_chunks = extract_and_chunk_audio_from_stream(video_url, chunk_length)
     
     if not audio_chunks:
-        bot.edit_message_text("❌ فشل الاتصال بالرابط.", chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text("❌ عذراً، فشل الاتصال بالروابط المرتادة. تأكد أن الرابط مباشر وصالح للتشغيل الفوري.", chat_id=message.chat.id, message_id=status_msg.message_id)
         return
         
     complete_translated_srt = ""
     total = len(audio_chunks)
     
     for index, chunk in enumerate(audio_chunks):
-        bot.edit_message_text(f"⚡ جاري معالجة الجزء [{index + 1}/{total}]...", chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text(f"⚡ جاري العمل على الجزء [{index + 1}/{total}]: جاري استخراج نصوص الكلام المسموع بدقة...", chat_id=message.chat.id, message_id=status_msg.message_id)
         srt_chunk = transcribe_audio_chunk(chunk)
+        
         if srt_chunk.strip():
             shift_seconds = index * chunk_length
             corrected_srt = shift_srt_timestamps(srt_chunk, shift_seconds)
+            
+            bot.edit_message_text(f"✨ جاري العمل على الجزء [{index + 1}/{total}]: صياغة الترجمة السينمائية للغة العربية الفصحى...", chat_id=message.chat.id, message_id=status_msg.message_id)
             translated_chunk = translate_srt_with_groq(corrected_srt)
             complete_translated_srt += translated_chunk + "\n\n"
             time.sleep(2)
@@ -142,18 +153,17 @@ def handle_movie_request(message):
         
     bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
     with open(FINAL_SRT_PATH, "rb") as f:
-        bot.send_document(message.chat.id, f, caption="🎯 مبروك! انتهت ترجمة فيلمك بنجاح.")
+        bot.send_document(message.chat.id, f, caption="🎯 مبروك! انتهت ترجمة فيلمك بالكامل بنجاح عبر السيرفر السحابي الآمن.")
         
     for chunk in audio_chunks:
         if os.path.exists(chunk): os.remove(chunk)
     if os.path.exists(FINAL_SRT_PATH): os.remove(FINAL_SRT_PATH)
 
-# --- تشغيل المنظومة المزدوجة ---
 if __name__ == "__main__":
-    # 1. تشغيل سيرفر الويب في خلفية منفصلة لRender
+    # تشغيل خادم الويب المدمج لـ Render في مسار منفصل لإبقاء السيرفر مستيقظاً
     server_thread = Thread(target=run_web_server)
     server_thread.start()
     
-    # 2. تشغيل البوت الأساسي لاستقبال رسائل تليجرام
-    print("🚀 البوت والسيرفر نشطان الآن...")
+    print("🚀 البوت والسيرفر السحابي الآمن نشطان الآن وجاهزان...")
     bot.infinity_polling()
+
