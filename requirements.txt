@@ -1,5 +1,2 @@
-pyTelegramBotAPI
-pydub
-requests
-Flask
-gunicorn
+python-telegram-bot==20.7
+groq==0.8.0
