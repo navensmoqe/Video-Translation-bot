@@ -121,7 +121,6 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     
     # --- التعديل الجذري: إجبار البوت على العمل بنظام Webhook ---
-    # تم وضع رابط البوت الخاص بك بشكل مباشر هنا لتجنب أي أخطاء
     RENDER_URL = "https://video-translation-bot-1.onrender.com"
     logger.info("جاري تشغيل Webhook الإجباري...")
     
