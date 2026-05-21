@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 PORT = int(os.environ.get("PORT", "10000"))
-RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- إعداد عميل Groq ---
 if GROQ_API_KEY:
@@ -88,6 +87,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if choice == "extract_text":
             await status_msg.edit_text(f"**النص المستخرج:**\n\n{extracted_text}", parse_mode='Markdown')
+            
         elif choice == "translate_video":
             await status_msg.edit_text("🌍 جاري ترجمة النص إلى العربية باحترافية...")
             chat_completion = client.chat.completions.create(
@@ -105,7 +105,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await status_msg.edit_text(f"حدث خطأ أثناء المعالجة. تأكد من أن المقطع يحتوي على صوت واضح.")
+        await status_msg.edit_text(f"حدث خطأ أثناء المعالجة. تأكد من أن المقطع يحتوي صوت واضح.")
         if os.path.exists(file_path):
             os.remove(file_path)
 
@@ -120,14 +120,16 @@ def main():
     app.add_handler(MessageHandler(filters.VIDEO | filters.AUDIO | filters.VOICE, handle_media))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # تشغيل البوت بنظام Webhook ليتوافق مع منصة Render
-    if RENDER_URL:
-        logger.info(f"جاري تشغيل Webhook على الرابط: {RENDER_URL}")
-        app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=RENDER_URL)
-    else:
-        logger.info("لم يتم العثور على رابط Render، سيتم تشغيل Polling.")
-        app.run_polling()
+    # --- التعديل الجذري: إجبار البوت على العمل بنظام Webhook ---
+    # تم وضع رابط البوت الخاص بك بشكل مباشر هنا لتجنب أي أخطاء
+    RENDER_URL = "https://video-translation-bot-1.onrender.com"
+    logger.info("جاري تشغيل Webhook الإجباري...")
+    
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=RENDER_URL
+    )
 
 if __name__ == "__main__":
     main()
-
