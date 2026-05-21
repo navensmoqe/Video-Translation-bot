@@ -12,84 +12,136 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
+# --- إعداد عميل Groq ---
 if GROQ_API_KEY:
     client = Groq(api_key=GROQ_API_KEY)
 
+# إنشاء مجلد لحفظ المقاطع مؤقتاً
+os.makedirs("downloads", exist_ok=True)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك! أرسل لي أي مقطع فيديو أو مقطع صوتي وسأقوم باستخراج النص منه أو ترجمته 🎥🎤")
+    await update.message.reply_text("أهلاً بك في بوت الاستخراج والترجمة! 🎤🎥\nأرسل لي أي مقطع فيديو أو بصمة صوتية وسأقوم بالواجب.")
 
 # 1. دالة استلام الفيديو/الصوت وعرض الأزرار
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # حفظ معلومات الملف لاستخدامها لاحقاً
+    # تحديد نوع الملف
     if update.message.video:
-        file_id = update.message.video.file_id
-    elif update.message.audio or update.message.voice:
-        file_id = (update.message.audio or update.message.voice).file_id
+        file_obj = update.message.video
+        file_ext = ".mp4"
+    elif update.message.audio:
+        file_obj = update.message.audio
+        file_ext = ".mp3"
+    elif update.message.voice:
+        file_obj = update.message.voice
+        file_ext = ".ogg"
     else:
         return
 
-    # حفظ معرّف الملف في ذاكرة البوت المؤقتة
-    context.user_data['current_file_id'] = file_id
+    # فحص حجم الملف (تيليجرام يسمح للبوتات بتحميل 20 ميجابايت كحد أقصى)
+    if file_obj.file_size > 20 * 1024 * 1024:
+        await update.message.reply_text("عذراً، حجم المقطع أكبر من 20 ميجابايت. يرجى إرسال مقطع أقصر.")
+        return
 
-    # إنشاء الأزرار
+    # حفظ معرّف الملف وامتداده في ذاكرة البوت
+    context.user_data['file_id'] = file_obj.file_id
+    context.user_data['file_ext'] = file_ext
+
     keyboard = [
         [
-            InlineKeyboardButton("استخراج النص فقط 📝", callback_data="extract_text"),
-            InlineKeyboardButton("ترجمة الفيديو 🌍", callback_data="translate_video")
+            InlineKeyboardButton("📝 استخراج النص (نفس لغة المقطع)", callback_data="extract_text")
+        ],
+        [
+            InlineKeyboardButton("🌍 ترجمة المقطع (إلى العربية)", callback_data="translate_video")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "تم استلام المقطع بنجاح! ماذا تريد أن أفعل به؟",
+        "تم استلام المقطع بنجاح! 🎬\nاختر ماذا تريد أن أفعل:",
         reply_markup=reply_markup
     )
 
-# 2. دالة الاستجابة لضغطات الأزرار
+# 2. دالة معالجة الأزرار والاستخراج/الترجمة
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # لإخفاء علامة التحميل من الزر
+    await query.answer()
     
     choice = query.data
-    file_id = context.user_data.get('current_file_id')
+    file_id = context.user_data.get('file_id')
+    file_ext = context.user_data.get('file_ext')
 
     if not file_id:
-        await query.edit_message_text(text="عذراً، انتهت صلاحية الملف. أرسل المقطع مجدداً.")
+        await query.edit_message_text(text="عذراً، انتهت صلاحية المقطع. أرسله مجدداً.")
         return
 
-    if choice == "extract_text":
-        await query.edit_message_text(text="⏳ جاري استخراج النص الأصلي من المقطع... (هذه العملية قد تستغرق بضع ثوانٍ)")
-        
-        # --- هنا تضع كود تحميل الفيديو واستخدام Groq Whisper لاستخراج النص ---
-        # (انظر الملاحظة بالأسفل لكيفية ربطها)
-        
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="[سيظهر النص المستخرج هنا]")
+    status_msg = await query.edit_message_text(text="⏳ جاري تحميل المقطع من تيليجرام...")
 
-    elif choice == "translate_video":
-        await query.edit_message_text(text="🌍 جاري ترجمة المقطع... (هذه العملية قد تستغرق بضع ثوانٍ)")
+    try:
+        # تحميل الملف من تيليجرام
+        new_file = await context.bot.get_file(file_id)
+        file_path = f"downloads/{file_id}{file_ext}"
+        await new_file.download_to_drive(file_path)
+
+        # استخراج النص باستخدام Whisper من Groq
+        await status_msg.edit_text("🎧 جاري الاستماع للمقطع واستخراج النص...")
         
-        # --- هنا تضع كود تحميل الفيديو واستخدام Groq Whisper للترجمة ---
+        with open(file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(file_path, file.read()),
+                model="whisper-large-v3",
+                response_format="json"
+            )
         
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="[ستظهر الترجمة هنا]")
+        extracted_text = transcription.text
+
+        # إذا كان المقطع فارغاً
+        if not extracted_text.strip():
+            await status_msg.edit_text("لم أتمكن من سماع أي كلام واضح في هذا المقطع.")
+            os.remove(file_path)
+            return
+
+        if choice == "extract_text":
+            await status_msg.edit_text(f"**النص المستخرج:**\n\n{extracted_text}", parse_mode='Markdown')
+
+        elif choice == "translate_video":
+            await status_msg.edit_text("🌍 جاري ترجمة النص إلى العربية باحترافية...")
+            
+            # ترجمة النص باستخدام Llama-3
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "أنت مترجم محترف. قم بترجمة النص التالي إلى اللغة العربية الفصحى بدقة واحترافية. أرسل الترجمة فقط دون أي إضافات."},
+                    {"role": "user", "content": extracted_text}
+                ],
+                model="llama-3.3-70b-versatile",
+            )
+            
+            translated_text = chat_completion.choices[0].message.content
+            final_message = f"**النص الأصلي:**\n{extracted_text}\n\n---\n\n**الترجمة العربية:**\n{translated_text}"
+            
+            await status_msg.edit_text(final_message, parse_mode='Markdown')
+
+        # حذف الملف من السيرفر بعد الانتهاء لتوفير المساحة
+        os.remove(file_path)
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await status_msg.edit_text(f"حدث خطأ أثناء المعالجة. تأكد من أن المقطع يحتوي على صوت واضح.")
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("تأكد من إضافة TELEGRAM_TOKEN")
+    if not TELEGRAM_TOKEN or not GROQ_API_KEY:
+        logger.error("خطأ: مفاتيح TELEGRAM_TOKEN أو GROQ_API_KEY مفقودة!")
         return
         
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # أوامر البوت
     app.add_handler(CommandHandler("start", start))
-    
-    # استقبال الفيديو والصوتيات
     app.add_handler(MessageHandler(filters.VIDEO | filters.AUDIO | filters.VOICE, handle_media))
-    
-    # استقبال ضغطات الأزرار
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    logger.info("تم تشغيل بوت الترجمة بنجاح...")
-    # إذا كنت تستخدم Render، استخدم run_webhook بدلاً من polling
+    # استخدام Polling لأن البوت لا يحتاج Webhook معقد هنا
+    logger.info("تم تشغيل البوت بنجاح! 🚀")
     app.run_polling()
 
 if __name__ == "__main__":
